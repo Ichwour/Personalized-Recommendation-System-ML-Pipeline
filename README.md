@@ -74,3 +74,88 @@ This created a hard-negative problem:
 - remaining candidates had similar metadata
 - single features had weak separation
 - ranking required combining many weak signals
+
+### Sequential Purchase Pattern Analysis
+
+After the candidate-level feature analysis showed weak single-feature separation, I explored whether user behavior had a stronger **sequential structure**.
+
+Instead of looking only at isolated purchase events, I analyzed transitions between consecutive purchases for each user.  
+The goal was to check whether customers move randomly across the recommendation space or whether their next purchase tends to follow stable behavioral patterns.
+
+For this analysis, each purchased item was mapped into a **profile similarity bucket** based on its `profile_score`.
+
+The `profile_score` represents how well a candidate item matches the user's historical taste profile.  
+Rather than treating it as a single static ranking signal, I used it as a behavioral state and analyzed how users transition from one state to another over time.
+
+### Method
+
+For every user, purchases were ordered chronologically.  
+Then, each purchase was assigned to a profile-score bucket, and transitions were calculated between the current purchase bucket and the next purchase bucket.
+
+A simplified version of the logic:
+
+```python
+import pandas as pd
+
+def assign_profile_bucket(score: float) -> str:
+    if score < 0.20:
+        return "0.00-0.20"
+    elif score < 0.45:
+        return "0.20-0.45"
+    elif score < 0.70:
+        return "0.45-0.70"
+    elif score < 0.90:
+        return "0.70-0.90"
+    else:
+        return "0.90-1.00"
+
+df = df.sort_values(["client_id", "event_time"])
+df["profile_bucket"] = df["profile_score"].apply(assign_profile_bucket)
+df["next_profile_bucket"] = (
+    df.groupby("client_id")["profile_bucket"]
+      .shift(-1)
+)
+transitions = (
+    df.dropna(subset=["next_profile_bucket"])
+      .groupby(["profile_bucket", "next_profile_bucket"])
+      .size()
+      .reset_index(name="transition_count")
+)
+transition_matrix = (
+    transitions
+    .pivot_table(
+        index="profile_bucket",
+        columns="next_profile_bucket",
+        values="transition_count",
+        fill_value=0
+    )
+)
+transition_matrix_pct = transition_matrix.div(
+    transition_matrix.sum(axis=1),
+    axis=0
+)
+```
+
+### Approximate Findings
+
+The transition matrix showed that user movement across profile-similarity buckets was not random.
+
+Several recurring transition patterns appeared:
+
+| Current profile-score bucket | Most common next movement | Interpretation |
+|---|---|---|
+| `0.00-0.20` | Toward approximately `0.80-0.90` | Users often returned to high-profile-match items after a low-similarity purchase |
+| `0.80-0.90` | Toward approximately `0.30-0.45` | After a very profile-aligned purchase, users often shifted back toward more moderate similarity |
+| `0.25-0.45` | Often stayed around `0.25-0.45` | Moderate-similarity behavior appeared relatively stable |
+
+This suggested that customers do not always move monotonically toward higher profile similarity.
+
+Instead, user behavior appeared to contain several behavioral modes:
+
+- **Profile return**: after an exploratory or low-similarity purchase, the next purchase often moved closer to the user's historical profile
+- **Moderate exploration**: after a strong profile match, the next purchase often moved toward a less obvious but still relevant range
+- **Stable moderate behavior**: some users repeatedly purchased items in the same middle-similarity range
+
+The main takeaway was that `profile_score` was not simply a static "higher is always better" signal.
+
+Its usefulness depended on the user's previous purchase state.
