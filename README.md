@@ -504,7 +504,7 @@ For every event:
 This was important because recommendation datasets are highly vulnerable to leakage and popularity overfitting.  
 Even small timestamp mistakes or uncontrolled repeated positives can make the model look stronger offline while failing in production-like evaluation.
 
-## CatBoost Learning-to-Rank Training
+## CatBoost Training
 
 After the candidate-level feature dataset was generated, the final ranking stage was trained with CatBoost.
 The model was trained as a ranking problem rather than a binary classification problem.  
